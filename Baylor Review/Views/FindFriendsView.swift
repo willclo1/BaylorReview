@@ -9,7 +9,7 @@ struct FindFriendsView: View {
     @StateObject private var vm = FriendViewModel()
     @State private var showingFilters = false
     @State private var searchText = ""
-    @State private var selectedFriend: Friend?   // ⬅️ NEW
+    @State private var selectedFriend: Friend?   // shows profile sheet
 
     init() {
         let barBG = UIColor(Color(hex: "#2E5930"))
@@ -195,7 +195,7 @@ struct FindFriendsView: View {
                                         onAccept:  { vm.acceptRequest(from: friend.id) },
                                         onDecline: { vm.declineRequest(from: friend.id) },
                                         onUnfriend:{ vm.unfriend(friend.id) },
-                                        onSelect:  { selectedFriend = friend }   // ⬅️ NEW
+                                        onSelect:  { selectedFriend = friend }   // open profile
                                     )
                                 }
                             }
@@ -222,7 +222,7 @@ struct FindFriendsView: View {
                                         onAccept:  { vm.acceptRequest(from: friend.id) },
                                         onDecline: { vm.declineRequest(from: friend.id) },
                                         onUnfriend:{ vm.unfriend(friend.id) },
-                                        onSelect:  { selectedFriend = friend }   // ⬅️ NEW
+                                        onSelect:  { selectedFriend = friend }   // open profile
                                     )
                                 }
                             }
@@ -258,7 +258,7 @@ struct FindFriendsView: View {
         .onAppear { vm.loadData() }
         .sheet(item: $selectedFriend) { friend in
             NavigationStack {
-                FriendProfileView(friend: friend, vm: vm)
+                FriendProfileView(friend: friend, vm: vm)   // Message pushes ChatThreadView
                     .navigationBarTitleDisplayMode(.inline)
             }
             .presentationDetents([.medium, .large])
@@ -317,7 +317,7 @@ struct EnhancedFriendRow: View {
     let onAccept: () -> Void
     let onDecline: () -> Void
     let onUnfriend: () -> Void
-    let onSelect: () -> Void     // ⬅️ NEW
+    let onSelect: () -> Void
 
     @State private var isPressed = false
 
@@ -389,8 +389,8 @@ struct EnhancedFriendRow: View {
                 .fill(Color.white)
                 .shadow(color: Color(hex: "#EFEAD9").opacity(0.06), radius: 4, y: 2)
         )
-        .contentShape(Rectangle())          // ⬅️ make whole row tappable
-        .onTapGesture { onSelect() }        // ⬅️ open profile on card tap (buttons still work)
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect() }       // open profile sheet
         .scaleEffect(isPressed ? 0.98 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isPressed)
         .simultaneousGesture(
@@ -398,7 +398,6 @@ struct EnhancedFriendRow: View {
                 .onChanged { _ in isPressed = true }
                 .onEnded { _ in isPressed = false }
         )
-        
     }
 
     @ViewBuilder
@@ -511,12 +510,27 @@ private extension View {
 }
 
 // MARK: - Friend Profile (Sheet Content)
+// MESSAGE button IMPLEMENTED using navigationDestination(item:)
 
 struct FriendProfileView: View {
     let friend: Friend
     @ObservedObject var vm: FriendViewModel
 
     @Environment(\.dismiss) private var dismiss
+
+    // Navigation to Chat
+    @State private var launchingChat = false
+    @State private var chatError: String?
+
+    // Route container for NavigationStack
+    private struct ChatRoute: Identifiable, Hashable {
+        let id: String      
+        let service: ChatService
+
+        static func == (lhs: ChatRoute, rhs: ChatRoute) -> Bool { lhs.id == rhs.id }
+        func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    }
+    @State private var chatRoute: ChatRoute?
 
     private var status: FriendStatus {
         vm.statusFor(friend.id)
@@ -586,8 +600,13 @@ struct FriendProfileView: View {
                         }
 
                     case .friends:
+                        // MESSAGE → create or open chat, then push ChatThreadView
                         PrimaryButton(title: "Message", icon: "message.fill") {
-                            // TODO: Hook up to your chat flow/navigation
+                            openChat()
+                        }
+                        .disabled(launchingChat)
+                        if launchingChat {
+                            ProgressView().tint(Color(hex: "#004C26"))
                         }
                         SecondaryButton(title: "Remove Friend", icon: "person.fill.xmark") {
                             vm.unfriend(friend.id)
@@ -639,6 +658,36 @@ struct FriendProfileView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationTitle("Profile")
         .navigationBarTitleDisplayMode(.inline)
+
+        // ✅ Modern programmatic navigation
+        .navigationDestination(item: $chatRoute) { route in
+            ChatThreadView(chatId: route.id, service: route.service)
+        }
+
+        // Error alert
+        .alert("Unable to open chat", isPresented: Binding(
+            get: { chatError != nil },
+            set: { if !$0 { chatError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(chatError ?? "Unknown error.")
+        }
+    }
+
+    // MARK: - Open chat helper
+
+    private func openChat() {
+        guard let myUid = Auth.auth().currentUser?.uid, !myUid.isEmpty else {
+            chatError = "You need to be signed in to send messages."
+            return
+        }
+        launchingChat = true
+        let service = ChatService(currentUserId: myUid)
+        service.getOrCreateChat(with: friend.id) { cid in
+            self.launchingChat = false
+            self.chatRoute = ChatRoute(id: cid, service: service)
+        }
     }
 }
 
@@ -716,4 +765,3 @@ private struct InfoRow: View {
         }
     }
 }
-

@@ -1,30 +1,41 @@
 import SwiftUI
 
-
 struct ProfessorListView: View {
     @StateObject private var manager = ProfessorViewModel()
     @State private var searchText = ""
 
-    // Group professors by name and build summaries
+    // Reporting UI state
+    @State private var reportTarget: ProfessorItem?
+    @State private var showReportThanks = false
+    @State private var reportError: String?
+
+    // Group professors by name (from items, so we have doc IDs)
     private var groupedProfessors: [ProfessorSummary] {
-        let grouped = Dictionary(grouping: manager.professors) { $0.name }
-        var summaries = grouped.map { name, reviews in
-            let avg = reviews.reduce(0) { $0 + $1.rating } / Double(reviews.count)
-            let courses = Array(Set(reviews.map(\.course))).sorted()
+        // Group by professor name
+        let grouped = Dictionary(grouping: manager.items) { $0.professor.name }
+
+        var summaries: [ProfessorSummary] = grouped.map { name, items in
+            let ratings = items.map { $0.professor.rating }
+            let avg = ratings.reduce(0, +) / Double(max(ratings.count, 1))
+            let courses = Array(Set(items.map { $0.professor.course })).sorted()
+            let sortedItems = items.sorted { $0.professor.dateCreated > $1.professor.dateCreated }
+
             return ProfessorSummary(
                 name: name,
                 averageRating: avg,
-                totalReviews: reviews.count,
+                totalReviews: items.count,
                 courses: courses,
-                reviews: reviews.sorted(by: { $0.dateCreated > $1.dateCreated })
+                items: sortedItems
             )
         }
+
         if !searchText.isEmpty {
             summaries = summaries.filter {
                 $0.name.localizedCaseInsensitiveContains(searchText)
-                || $0.courses.contains { $0.localizedCaseInsensitiveContains(searchText) }
+                || $0.courses.contains(where: { $0.localizedCaseInsensitiveContains(searchText) })
             }
         }
+
         return summaries.sorted(by: { $0.name < $1.name })
     }
 
@@ -54,7 +65,8 @@ struct ProfessorListView: View {
                             text: $searchText,
                             prompt: Text("Search by professor or course")
                                 .foregroundColor(Color(hex: "#004C26"))
-                        ).foregroundColor(Color(hex: "#004C26"))
+                        )
+                        .foregroundColor(Color(hex: "#004C26"))
                     }
                     .padding(12)
                     .background(
@@ -89,9 +101,12 @@ struct ProfessorListView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            ForEach(groupedProfessors, id: \.name) { summary in
+                            ForEach(groupedProfessors) { summary in
                                 NavigationLink {
-                                    ProfessorDetailView(professorSummary: summary)
+                                    ProfessorDetailView(
+                                        professorSummary: summary,
+                                        onReport: { item in reportTarget = item }
+                                    )
                                 } label: {
                                     ProfessorSummaryCard(summary: summary)
                                 }
@@ -105,20 +120,49 @@ struct ProfessorListView: View {
             }
         }
         .onAppear { manager.fetchProfessors() }
-        
+
+        // Ad
         .safeAreaInset(edge: .bottom) {
             BannerAdView(adUnitID: AdConfig.bannerUnitID)
-            .frame(height: 50) // adaptive usually ~50–100
-            .background(Color.white)
-            .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
+                .frame(height: 50)
+                .background(Color.white)
+                .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
+        }
+
+        // Report sheet + alerts
+        .sheet(item: $reportTarget) { item in
+            ReportReviewSheet(item: item) { reason, details in
+                manager.reportReview(for: item, reason: reason, details: details) { result in
+                    switch result {
+                    case .success:
+                        showReportThanks = true
+                    case .failure(let err):
+                        reportError = err.localizedDescription
+                    }
+                }
+            }
+        }
+        .alert("Thanks for the report", isPresented: $showReportThanks) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Our team will review it shortly.")
+        }
+        .alert("Couldn't send report", isPresented: Binding(
+            get: { reportError != nil },
+            set: { if !$0 { reportError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(reportError ?? "Unknown error.")
         }
     }
 }
 
-
+// MARK: - Detail view
 
 struct ProfessorDetailView: View {
     let professorSummary: ProfessorSummary
+    var onReport: (ProfessorItem) -> Void
 
     var body: some View {
         ZStack {
@@ -150,8 +194,8 @@ struct ProfessorDetailView: View {
                                 HStack(spacing: 2) {
                                     ForEach(1...5, id: \.self) { star in
                                         Image(systemName:
-                                            star <= Int(professorSummary.averageRating.rounded())
-                                            ? "star.fill" : "star")
+                                                star <= Int(professorSummary.averageRating.rounded())
+                                              ? "star.fill" : "star")
                                         .font(.system(size: 16))
                                         .foregroundColor(Color(hex: "#F5B800"))
                                     }
@@ -188,8 +232,11 @@ struct ProfessorDetailView: View {
                             .foregroundColor(Color(hex: "#004C26"))
                             .padding(.horizontal, 4)
 
-                        ForEach(professorSummary.reviews) { review in
-                            IndividualReviewCard(review: review)
+                        ForEach(professorSummary.items) { item in
+                            IndividualReviewCard(
+                                item: item,
+                                onReport: { onReport(item) }
+                            )
                         }
                     }
                 }
@@ -201,6 +248,7 @@ struct ProfessorDetailView: View {
     }
 }
 
+// MARK: - Summary card
 
 struct ProfessorSummaryCard: View {
     let summary: ProfessorSummary
@@ -233,7 +281,7 @@ struct ProfessorSummaryCard: View {
                 }
             }
 
-            if let latest = summary.reviews.first {
+            if let latest = summary.items.first?.professor {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Latest Review:")
@@ -265,8 +313,13 @@ struct ProfessorSummaryCard: View {
     }
 }
 
+// MARK: - Individual review (with report actions)
+
 struct IndividualReviewCard: View {
-    let review: Professor
+    let item: ProfessorItem
+    var onReport: () -> Void
+
+    private var review: Professor { item.professor }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -302,12 +355,22 @@ struct IndividualReviewCard: View {
                 .fill(Color.white)
                 .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
         )
-        
-        
+        // Swipe to report
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) { onReport() } label: {
+                Label("Report", systemImage: "flag")
+            }
+        }
+        // Long press context menu
+        .contextMenu {
+            Button(role: .destructive) { onReport() } label: {
+                Label("Report review", systemImage: "flag")
+            }
+        }
     }
-    
 }
 
+// MARK: - Preview
 
 struct ProfessorListView_Previews: PreviewProvider {
     static var previews: some View {

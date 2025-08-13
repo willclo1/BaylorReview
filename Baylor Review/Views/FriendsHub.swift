@@ -42,13 +42,21 @@ struct FriendsHubView: View {
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         switch tab {
                         case .incoming:
-                            Button { vm.acceptRequest(from: f.id) } label: { Label("Accept", systemImage: "checkmark") }
-                                .tint(Color(hex: "#2E5930"))
-                            Button(role: .destructive) { vm.declineRequest(from: f.id) } label: { Label("Decline", systemImage: "xmark") }
+                            Button { vm.acceptRequest(from: f.id) } label: {
+                                Label("Accept", systemImage: "checkmark")
+                            }
+                            .tint(Color(hex: "#2E5930"))
+                            Button(role: .destructive) { vm.declineRequest(from: f.id) } label: {
+                                Label("Decline", systemImage: "xmark")
+                            }
                         case .sent:
-                            Button(role: .destructive) { vm.cancelRequest(with: f.id) } label: { Label("Cancel", systemImage: "xmark") }
+                            Button(role: .destructive) { vm.cancelRequest(with: f.id) } label: {
+                                Label("Cancel", systemImage: "xmark")
+                            }
                         case .friends:
-                            Button(role: .destructive) { vm.unfriend(f.id) } label: { Label("Remove", systemImage: "person.fill.xmark") }
+                            Button(role: .destructive) { vm.unfriend(f.id) } label: {
+                                Label("Remove", systemImage: "person.fill.xmark")
+                            }
                         }
                     }
                 }
@@ -67,9 +75,9 @@ struct FriendsHubView: View {
         
         .safeAreaInset(edge: .bottom) {
             BannerAdView(adUnitID: AdConfig.bannerUnitID)
-            .frame(height: 50)
-            .background(Color.white)
-            .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
+                .frame(height: 50)
+                .background(Color.white)
+                .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
         }
     }
 
@@ -99,11 +107,9 @@ struct FriendsHubView: View {
         let idx = abs(name.hashValue) % palettes.count
         return palettes[idx]
     }
-    
-    
 }
 
-// MARK: - Row Subview (keeps type-checking fast)
+// MARK: - Row Subview (incoming buttons moved below name/major)
 
 private struct FriendRow: View {
     let friend: Friend
@@ -114,44 +120,57 @@ private struct FriendRow: View {
     let remove: () -> Void
     let avatarColors: [Color]
 
+    private let avatarSize: CGFloat = 44
+    private let hGap: CGFloat = 12
+
     var body: some View {
-        HStack(spacing: 12) {
-            // Avatar
-            Circle()
-                .fill(LinearGradient(colors: avatarColors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 44, height: 44)
-                .overlay(
-                    Text(String(friend.fullName.prefix(1)))
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.white.opacity(0.9))
-                )
+        VStack(alignment: .leading, spacing: 10) {
+            // Top line: avatar + meta + (trailing actions for non-incoming)
+            HStack(spacing: hGap) {
+                // Avatar
+                Circle()
+                    .fill(LinearGradient(colors: avatarColors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: avatarSize, height: avatarSize)
+                    .overlay(
+                        Text(String(friend.fullName.prefix(1)))
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white.opacity(0.9))
+                    )
 
-            // Meta
-            VStack(alignment: .leading, spacing: 2) {
-                Text(friend.fullName)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(Color(hex: "#004C26"))
-                    .lineLimit(1)
+                // Meta
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(friend.fullName)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(hex: "#004C26"))
+                        .lineLimit(1)
 
-                Text("\(friend.major) • \(friend.year)")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color(hex: "#004C26").opacity(0.85))
-                    .lineLimit(1)
+                    Text("\(friend.major) • \(friend.year)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color(hex: "#004C26").opacity(0.85))
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                // For .sent and .friends keep the trailing action on the top line.
+                switch tab {
+                case .incoming:
+                    EmptyView() // no trailing buttons; they appear below
+                case .sent:
+                    pillOutline("xmark", "Cancel", action: cancel)
+                case .friends:
+                    pillOutline("person.fill.xmark", "Remove", action: remove)
+                }
             }
 
-            Spacer(minLength: 8)
-
-            // Actions (bigger, no clipping)
-            switch tab {
-            case .incoming:
+            // For .incoming, show buttons BELOW the meta so they don't block the name.
+            if tab == .incoming {
                 HStack(spacing: 10) {
                     pillFilled("checkmark", "Accept", action: accept)
                     pillOutline("xmark", "Decline", action: decline)
                 }
-            case .sent:
-                pillOutline("xmark", "Cancel", action: cancel)
-            case .friends:
-                pillOutline("person.fill.xmark", "Remove", action: remove)
+                // Indent to align with the text column (avatar + gap)
+                .padding(.leading, avatarSize + hGap)
             }
         }
         .padding(12)

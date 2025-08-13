@@ -20,11 +20,19 @@ struct Professor: Identifiable, Codable {
     }
 }
 
-struct ProfessorSummary {
+struct ProfessorItem: Identifiable {
+    let id: String
+    let professor: Professor
+
+
+    var createdAt: Date { professor.dateCreated }
+}
+
+struct ProfessorSummary: Identifiable {
+    var id: String { name }
     let name: String
     let averageRating: Double
     let totalReviews: Int
     let courses: [String]
-    let reviews: [Professor]
+    let items: [ProfessorItem]      
 }
-

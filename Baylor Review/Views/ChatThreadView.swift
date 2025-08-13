@@ -1,16 +1,41 @@
 import SwiftUI
 import FirebaseFirestore
+import FirebaseAuth
 
-struct ChatThreadView: View {
-    let chatId: String
-    let service: ChatService   
+private struct UserLite: Identifiable, Equatable {
+    let id: String
+    let displayName: String
+}
+
+
+
+public struct ChatThreadView: View {
+    public let chatId: String
+    public let service: ChatService
 
     @State private var messages: [Message] = []
     @State private var listener: ListenerRegistration?
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
 
-    var body: some View {
+    // Reporting UI state (NEW)
+    @State private var participants: [UserLite] = []   // other users in this chat
+    @State private var selectedUserIndex: Int = 0
+    @State private var showReportSheet = false
+    @State private var reportThanks = false
+    @State private var reportError: String?
+
+    private var selectedUser: UserLite? {
+        guard !participants.isEmpty, selectedUserIndex < participants.count else { return nil }
+        return participants[selectedUserIndex]
+    }
+
+    public init(chatId: String, service: ChatService) {
+        self.chatId = chatId
+        self.service = service
+    }
+
+    public var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -90,12 +115,45 @@ struct ChatThreadView: View {
                 }
             )
         }
-        .navigationTitle("Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(hex: "#2E5930"), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .tint(.white)
+        .toolbar {
+            // Center title: username picker (NEW)
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 16, weight: .semibold))
+                    if participants.isEmpty {
+                        Text("Chat")
+                            .font(.headline)
+                    } else {
+                        Picker("", selection: $selectedUserIndex) {
+                            ForEach(participants.indices, id: \.self) { idx in
+                                Text(participants[idx].displayName).tag(idx)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .font(.headline)
+                        .tint(.white)
+                    }
+                }
+            }
+
+            // Trailing: report button (NEW)
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showReportSheet = true
+                } label: {
+                    Image(systemName: "flag.fill")
+                }
+                .disabled(selectedUser == nil)
+                .accessibilityLabel("Report selected user")
+            }
+        }
         .background(
             LinearGradient(
                 colors: [Color(hex: "#FFF5E1"), Color(hex: "#F0E6D2")],
@@ -108,10 +166,42 @@ struct ChatThreadView: View {
                 self.messages = msgs
                 service.markRead(chatId: chatId)
             }
+            loadParticipants() // NEW
         }
         .onDisappear {
             listener?.remove()
             listener = nil
+        }
+        // Report sheet + alerts (NEW)
+        .sheet(isPresented: $showReportSheet) {
+            if let victim = selectedUser {
+                ReportUserSheet(username: victim.displayName) { reason, details in
+                    service.reportUser(
+                        reportedUid: victim.id,
+                        in: chatId,
+                        reason: reason,
+                        details: details
+                    ) { result in
+                        switch result {
+                        case .success: reportThanks = true
+                        case .failure(let err): reportError = err.localizedDescription
+                        }
+                    }
+                }
+            }
+        }
+        .alert("Thanks for the report", isPresented: $reportThanks) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Our team will review it shortly.")
+        }
+        .alert("Couldn't send report", isPresented: Binding(
+            get: { reportError != nil },
+            set: { if !$0 { reportError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(reportError ?? "Unknown error.")
         }
     }
 
@@ -120,6 +210,34 @@ struct ChatThreadView: View {
         guard !text.isEmpty else { return }
         service.send(text: text, in: chatId)
         inputText = ""
+    }
+
+    // Resolve other participants' names for the picker (NEW)
+    private func loadParticipants() {
+        let db = Firestore.firestore()
+        db.collection("chats").document(chatId).getDocument { snap, err in
+            if let err = err { print("participants error:", err); return }
+            let ids = (snap?.data()?["participantIds"] as? [String] ?? [])
+                .filter { $0 != service.currentUid }
+
+            if ids.isEmpty { return }
+
+            let group = DispatchGroup()
+            var results: [UserLite] = []
+            for id in ids {
+                group.enter()
+                db.collection("users").document(id).getDocument { dsnap, _ in
+                    let name = dsnap?.data()?["fullName"] as? String
+                    let lite = UserLite(id: id, displayName: (name?.isEmpty == false ? name! : id))
+                    results.append(lite)
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                self.participants = results.sorted { $0.displayName < $1.displayName }
+                self.selectedUserIndex = 0
+            }
+        }
     }
 
     // MARK: - Day divider logic
@@ -131,6 +249,8 @@ struct ChatThreadView: View {
         return !Calendar.current.isDate(curr, inSameDayAs: prev)
     }
 }
+
+// MARK: - Message bubble
 
 private struct MessageBubble: View {
     let message: Message
@@ -189,6 +309,8 @@ private struct MessageBubble: View {
     }()
 }
 
+// MARK: - Day divider
+
 private struct DayDivider: View {
     let date: Date?
 
@@ -216,5 +338,87 @@ private struct DayDivider: View {
         f.dateStyle = .medium
         f.timeStyle = .none
         return f.string(from: d)
+    }
+}
+
+// MARK: - Report sheet
+
+private struct ReportUserSheet: View {
+    let username: String
+    var onSubmit: (_ reason: AbuseReason, _ details: String?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var reason: AbuseReason = .harassmentOrHate
+    @State private var details: String = ""
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Report \(username)")
+                        .font(.title2.bold())
+                        .foregroundColor(Color(hex: "#004C26"))
+                    Text("Tell us what happened. We’ll review it.")
+                        .font(.subheadline)
+                        .foregroundColor(Color(hex: "#004C26").opacity(0.75))
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Reason")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Color(hex: "#004C26"))
+                    Picker("Reason", selection: $reason) {
+                        ForEach(AbuseReason.allCases) { r in
+                            Text(r.rawValue).tag(r)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Details (optional)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Color(hex: "#004C26"))
+                    TextEditor(text: $details)
+                        .frame(minHeight: 120)
+                        .scrollContentBackground(.hidden)  
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.white)
+                                .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color(hex: "#F5B800").opacity(0.4), lineWidth: 1)
+                        )
+                }
+
+                Spacer()
+            }
+            .padding()
+            .background(
+                LinearGradient(
+                    colors: [Color(hex: "#FFF5E1"), Color(hex: "#F5F0DC")],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+            )
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        let trimmed = details.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onSubmit(reason, trimmed.isEmpty ? nil : trimmed)
+                        dismiss()
+                    } label: {
+                        Text("Report").bold()
+                    }
+                }
+            }
+        }
     }
 }

@@ -202,7 +202,7 @@ private struct ChatRow: View {
     }
 }
 
-// MARK: - New Chat Sheet (unchanged except style)
+
 
 private struct NewChatSheet: View {
     let friends: [Friend]

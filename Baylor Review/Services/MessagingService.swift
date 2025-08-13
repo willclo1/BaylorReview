@@ -2,35 +2,15 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 
-struct Chat: Identifiable, Equatable {
-    var id: String
-    var participantIds: [String]
-    var createdAt: Timestamp?
-    var lastMessageText: String?
-    var lastMessageAt: Timestamp?
-    var lastSenderId: String?
-}
-
-struct Message: Identifiable, Equatable {
-    var id: String
-    var senderId: String
-    var text: String
-    var createdAt: Timestamp?
-}
-
-struct ChatMember {
-    var lastReadAt: Timestamp?
-}
-
 @MainActor
-final class ChatService: ObservableObject {
+public final class ChatService: ObservableObject {
     private let db = Firestore.firestore()
     private let uid: String
 
-    @Published var chats: [Chat] = []
+    @Published public var chats: [Chat] = []
     private var chatsListener: ListenerRegistration?
 
-    init(currentUserId: String) {
+    public init(currentUserId: String) {
         self.uid = currentUserId
     }
 
@@ -38,14 +18,15 @@ final class ChatService: ObservableObject {
         chatsListener?.remove()
     }
 
-    var currentUid: String { uid }
+    public var currentUid: String { uid }
 
-    func chatId(with otherId: String) -> String {
+    // Deterministic id for a 1:1 chat
+    public func chatId(with otherId: String) -> String {
         [uid, otherId].sorted().joined(separator: "_")
     }
 
-    // Create if missing, otherwise return id
-    func getOrCreateChat(with otherId: String, completion: @escaping (String) -> Void) {
+    // Create chat if missing, otherwise return existing id
+    public func getOrCreateChat(with otherId: String, completion: @escaping (String) -> Void) {
         let cid = chatId(with: otherId)
         let ref = db.collection("chats").document(cid)
 
@@ -61,7 +42,6 @@ final class ChatService: ObservableObject {
                 return
             }
 
-            // Seed order fields so list queries are stable even before first message
             let now = FieldValue.serverTimestamp()
             let data: [String: Any] = [
                 "participantIds": [self.uid, otherId],
@@ -84,7 +64,7 @@ final class ChatService: ObservableObject {
     }
 
     // Send a text and update chat summary
-    func send(text: String, in chatId: String) {
+    public func send(text: String, in chatId: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -109,12 +89,11 @@ final class ChatService: ObservableObject {
         ], merge: true)
     }
 
-    // Live list of chats for current user
-    func listenChats() {
+    // Realtime list of chats for current user
+    public func listenChats() {
         chatsListener?.remove()
 
-        // NOTE: Ensure a composite index exists for:
-        // participantIds (array_contains) + lastMessageAt (desc)
+        // Ensure composite index: participantIds (array_contains) + lastMessageAt (desc)
         chatsListener = db.collection("chats")
             .whereField("participantIds", arrayContains: uid)
             .order(by: "lastMessageAt", descending: true)
@@ -126,27 +105,26 @@ final class ChatService: ObservableObject {
                 }
                 let docs = snap?.documents ?? []
                 let mapped: [Chat] = docs.map(Self.mapChat)
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.chats = mapped
                 }
             }
     }
 
-    func stopListening() {
+    public func stopListening() {
         chatsListener?.remove()
         chatsListener = nil
     }
-    
-    func markRead(chatId: String) {
-           Firestore.firestore()
-               .collection("chats").document(chatId)
-               .collection("members").document(uid)
-               .setData(["lastReadAt": FieldValue.serverTimestamp()], merge: true)
-       }
+
+    public func markRead(chatId: String) {
+        db.collection("chats").document(chatId)
+            .collection("members").document(uid)
+            .setData(["lastReadAt": FieldValue.serverTimestamp()], merge: true)
+    }
 
     // Live list of messages (ascending for UI)
     @discardableResult
-    func listenMessages(
+    public func listenMessages(
         chatId: String,
         limit: Int = 100,
         onChange: @escaping ([Message]) -> Void
@@ -162,7 +140,6 @@ final class ChatService: ObservableObject {
                     return
                 }
                 let docs = snap?.documents ?? []
-                // Drop any with unresolved serverTimestamp to avoid "blank" sort/render
                 let items: [Message] = docs
                     .map(Self.mapMessage)
                     .filter { $0.createdAt != nil }
@@ -172,37 +149,71 @@ final class ChatService: ObservableObject {
             }
     }
 
+
+    public func reportUser(
+        reportedUid: String,
+        in chatId: String,
+        reason: AbuseReason,
+        details: String?,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        let reports = db.collection("reports_users")
+
+        reports
+            .whereField("reporterUid", isEqualTo: uid)
+            .whereField("reportedUid", isEqualTo: reportedUid)
+            .whereField("chatId", isEqualTo: chatId)
+            .limit(to: 1)
+            .getDocuments { snapshot, err in
+                if let err = err {
+                    completion(.failure(err))
+                    return
+                }
+                if let snap = snapshot, !snap.documents.isEmpty {
+                    completion(.failure(DuplicateUserReportError()))
+                    return
+                }
+
+                var payload: [String: Any] = [
+                    "reporterUid": self.uid,
+                    "reportedUid": reportedUid,
+                    "chatId": chatId,
+                    "reason": reason.rawValue,
+                    "status": "pending",
+                    "createdAt": FieldValue.serverTimestamp()
+                ]
+                if let details, !details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    payload["details"] = details
+                }
+
+                reports.addDocument(data: payload) { err in
+                    if let err = err { completion(.failure(err)) }
+                    else { completion(.success(())) }
+                }
+            }
+    }
+
     // MARK: - Mapping helpers
 
     private static func mapChat(_ d: QueryDocumentSnapshot) -> Chat {
         let x = d.data()
-        let participants = x["participantIds"] as? [String] ?? []
-        let createdAt = x["createdAt"] as? Timestamp
-        let lastText = x["lastMessageText"] as? String
-        let lastAt = x["lastMessageAt"] as? Timestamp
-        let lastSender = x["lastSenderId"] as? String
-
         return Chat(
             id: d.documentID,
-            participantIds: participants,
-            createdAt: createdAt,
-            lastMessageText: lastText,
-            lastMessageAt: lastAt,
-            lastSenderId: lastSender
+            participantIds: x["participantIds"] as? [String] ?? [],
+            createdAt: x["createdAt"] as? Timestamp,
+            lastMessageText: x["lastMessageText"] as? String,
+            lastMessageAt: x["lastMessageAt"] as? Timestamp,
+            lastSenderId: x["lastSenderId"] as? String
         )
     }
 
     private static func mapMessage(_ d: QueryDocumentSnapshot) -> Message {
         let x = d.data()
-        let senderId = x["senderId"] as? String ?? ""
-        let text = x["text"] as? String ?? ""
-        let createdAt = x["createdAt"] as? Timestamp
-
         return Message(
             id: d.documentID,
-            senderId: senderId,
-            text: text,
-            createdAt: createdAt
+            senderId: x["senderId"] as? String ?? "",
+            text: x["text"] as? String ?? "",
+            createdAt: x["createdAt"] as? Timestamp
         )
     }
 }
