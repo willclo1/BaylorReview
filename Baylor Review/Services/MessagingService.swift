@@ -2,7 +2,6 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 
-
 struct Chat: Identifiable, Equatable {
     var id: String
     var participantIds: [String]
@@ -23,6 +22,7 @@ struct ChatMember {
     var lastReadAt: Timestamp?
 }
 
+@MainActor
 final class ChatService: ObservableObject {
     private let db = Firestore.firestore()
     private let uid: String
@@ -38,8 +38,10 @@ final class ChatService: ObservableObject {
         chatsListener?.remove()
     }
 
+    var currentUid: String { uid }
+
     func chatId(with otherId: String) -> String {
-        return [uid, otherId].sorted().joined(separator: "_")
+        [uid, otherId].sorted().joined(separator: "_")
     }
 
     // Create if missing, otherwise return id
@@ -51,7 +53,7 @@ final class ChatService: ObservableObject {
             guard let self = self else { return }
             if let err = err {
                 print("get chat error:", err)
-                completion(cid) // still return the ID so caller can continue
+                completion(cid)
                 return
             }
             if let snap, snap.exists {
@@ -59,18 +61,22 @@ final class ChatService: ObservableObject {
                 return
             }
 
+            // Seed order fields so list queries are stable even before first message
+            let now = FieldValue.serverTimestamp()
             let data: [String: Any] = [
                 "participantIds": [self.uid, otherId],
-                "createdAt": FieldValue.serverTimestamp()
+                "createdAt": now,
+                "lastMessageText": "",
+                "lastMessageAt": now,
+                "lastSenderId": ""
             ]
             ref.setData(data) { err in
                 if let err = err { print("create chat error:", err) }
 
-                // Initialize member read markers
                 ref.collection("members").document(self.uid)
-                    .setData(["lastReadAt": FieldValue.serverTimestamp()], merge: true)
+                    .setData(["lastReadAt": now], merge: true)
                 ref.collection("members").document(otherId)
-                    .setData(["lastReadAt": FieldValue.serverTimestamp()], merge: true)
+                    .setData(["lastReadAt": now], merge: true)
 
                 completion(cid)
             }
@@ -107,6 +113,8 @@ final class ChatService: ObservableObject {
     func listenChats() {
         chatsListener?.remove()
 
+        // NOTE: Ensure a composite index exists for:
+        // participantIds (array_contains) + lastMessageAt (desc)
         chatsListener = db.collection("chats")
             .whereField("participantIds", arrayContains: uid)
             .order(by: "lastMessageAt", descending: true)
@@ -128,6 +136,13 @@ final class ChatService: ObservableObject {
         chatsListener?.remove()
         chatsListener = nil
     }
+    
+    func markRead(chatId: String) {
+           Firestore.firestore()
+               .collection("chats").document(chatId)
+               .collection("members").document(uid)
+               .setData(["lastReadAt": FieldValue.serverTimestamp()], merge: true)
+       }
 
     // Live list of messages (ascending for UI)
     @discardableResult
@@ -147,25 +162,15 @@ final class ChatService: ObservableObject {
                     return
                 }
                 let docs = snap?.documents ?? []
-                let items: [Message] = docs.map(Self.mapMessage)
-                let ascending = items.sorted { ($0.createdAt?.dateValue() ?? .distantPast) < ($1.createdAt?.dateValue() ?? .distantPast) }
-                onChange(ascending)
+                // Drop any with unresolved serverTimestamp to avoid "blank" sort/render
+                let items: [Message] = docs
+                    .map(Self.mapMessage)
+                    .filter { $0.createdAt != nil }
+                    .sorted { ($0.createdAt!.dateValue()) < ($1.createdAt!.dateValue()) }
+
+                onChange(items)
             }
     }
-
-    // Update my read marker
-    func markRead(chatId: String) {
-        db.collection("chats").document(chatId)
-            .collection("members").document(uid)
-            .setData(["lastReadAt": FieldValue.serverTimestamp()], merge: true)
-    }
-
-    // Convenience to get the other participant
-    func otherParticipant(in chat: Chat) -> String? {
-        chat.participantIds.first(where: { $0 != uid })
-    }
-
-    var currentUid: String { uid }
 
     // MARK: - Mapping helpers
 

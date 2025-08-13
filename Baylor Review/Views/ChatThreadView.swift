@@ -3,7 +3,7 @@ import FirebaseFirestore
 
 struct ChatThreadView: View {
     let chatId: String
-    @ObservedObject var service: ChatService
+    let service: ChatService   
 
     @State private var messages: [Message] = []
     @State private var listener: ListenerRegistration?
@@ -16,7 +16,6 @@ struct ChatThreadView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(Array(messages.enumerated()), id: \.element.id) { index, m in
-                            // Day divider when the calendar day changes
                             if shouldShowDayDivider(at: index) {
                                 DayDivider(date: messages[index].createdAt?.dateValue())
                                     .padding(.vertical, 4)
@@ -32,17 +31,19 @@ struct ChatThreadView: View {
                     }
                     .padding(.vertical, 10)
                 }
-                // Auto-scroll when new messages arrive
                 .onChange(of: messages.count) { _ in
                     if let last = messages.last?.id {
-                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
                     }
                 }
-                // Also nudge scroll when the field focuses (keyboard up)
                 .onChange(of: inputFocused) { focused in
                     if focused, let last = messages.last?.id {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(last, anchor: .bottom)
+                            }
                         }
                     }
                 }
@@ -50,7 +51,6 @@ struct ChatThreadView: View {
 
             // Composer
             HStack(alignment: .bottom, spacing: 8) {
-                // Multiline field with custom (non-white) background
                 TextField("Message…", text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
@@ -61,7 +61,7 @@ struct ChatThreadView: View {
                     .padding(.vertical, 10)
                     .background(
                         RoundedRectangle(cornerRadius: 16)
-                            .fill(Color(hex: "#E8DCC6")) // soft parchment
+                            .fill(Color(hex: "#E8DCC6"))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
@@ -81,7 +81,6 @@ struct ChatThreadView: View {
             }
             .padding(.all, 10)
             .background(
-                // subtle top separator + warm backdrop
                 ZStack {
                     Color(hex: "#EFEAD9").opacity(0.7)
                     Rectangle()
@@ -124,7 +123,6 @@ struct ChatThreadView: View {
     }
 
     // MARK: - Day divider logic
-
     private func shouldShowDayDivider(at index: Int) -> Bool {
         guard index < messages.count else { return false }
         guard let curr = messages[index].createdAt?.dateValue() else { return false }
@@ -138,7 +136,6 @@ private struct MessageBubble: View {
     let message: Message
     let isMine: Bool
 
-    // Cap for long messages; short bubbles stay compact
     private var maxBubbleWidth: CGFloat { UIScreen.main.bounds.width * 0.68 }
 
     private var timeString: String {
@@ -147,11 +144,8 @@ private struct MessageBubble: View {
     }
 
     var body: some View {
-        // Align the entire bubble row left/right across the full width
         HStack {
             VStack(alignment: isMine ? .trailing : .leading, spacing: 4) {
-
-                // Bubble that hugs its text; only capped by maxBubbleWidth
                 Text(message.text)
                     .font(.system(size: 16))
                     .foregroundColor(isMine ? .white : Color(hex: "#0E3A1E"))
@@ -172,10 +166,9 @@ private struct MessageBubble: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .shadow(color: .black.opacity(0.06), radius: 3, y: 2)
-                    .fixedSize(horizontal: false, vertical: true) // hug content
-                    .frame(maxWidth: maxBubbleWidth, alignment: isMine ? .trailing : .leading) // cap long messages
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: maxBubbleWidth, alignment: isMine ? .trailing : .leading)
 
-                // Timestamp — GOLD and clearly visible
                 Text(timeString)
                     .font(.caption)
                     .fontWeight(.semibold)
@@ -183,9 +176,8 @@ private struct MessageBubble: View {
                     .padding(isMine ? .trailing : .leading, 6)
             }
         }
-        // Push the whole stack to the edge we want
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
-        .padding(.horizontal, 12)        // edge margin
+        .padding(.horizontal, 12)
         .transition(.opacity.combined(with: .move(edge: isMine ? .trailing : .leading)))
     }
 
@@ -196,6 +188,7 @@ private struct MessageBubble: View {
         return f
     }()
 }
+
 private struct DayDivider: View {
     let date: Date?
 

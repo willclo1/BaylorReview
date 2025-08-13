@@ -201,7 +201,66 @@ class FriendViewModel: ObservableObject {
     }
 
     func unfriend(_ otherId: String) {
-        cancelRequest(with: otherId)
+        guard !myUID.isEmpty else { return }
+        let id = pairId(myUID, otherId)
+        db.collection("friendships").document(id).delete { [weak self] err in
+            if let err {
+                print("unfriend error: \(err.localizedDescription)")
+                return
+            }
+            self?.deleteDirectChat(with: otherId)
+        }
+    }
+    
+
+    private func deleteDirectChat(with otherId: String, completion: ((Error?) -> Void)? = nil) {
+        let cid = pairId(myUID, otherId)
+        let chatRef = db.collection("chats").document(cid)
+        let messagesRef = chatRef.collection("messages")
+        let membersRef  = chatRef.collection("members")
+
+        // 1) delete all messages (batched, recursive)
+        deleteCollection(messagesRef, batchSize: 300) { [weak self] err in
+            if let err { print("delete messages error:", err); completion?(err); return }
+
+            // 2) delete all members docs
+            membersRef.getDocuments { snap, err in
+                if let err { print("get members error:", err); completion?(err); return }
+
+                let batch = self?.db.batch()
+                snap?.documents.forEach { batch?.deleteDocument($0.reference) }
+                batch?.commit { err in
+                    if let err { print("delete members error:", err); completion?(err); return }
+
+                    // 3) finally delete the chat doc
+                    chatRef.delete { err in
+                        if let err { print("delete chat doc error:", err) }
+                        completion?(err)
+                    }
+                }
+            }
+        }
+    }
+
+
+    private func deleteCollection(_ ref: CollectionReference,
+                                  batchSize: Int = 300,
+                                  completion: @escaping (Error?) -> Void) {
+        ref.limit(to: batchSize).getDocuments { [weak self] snap, err in
+            if let err { completion(err); return }
+            guard let self else { completion(nil); return }
+
+            let docs = snap?.documents ?? []
+            guard !docs.isEmpty else { completion(nil); return }
+
+            let batch = self.db.batch()
+            docs.forEach { batch.deleteDocument($0.reference) }
+            batch.commit { err in
+                if let err { completion(err); return }
+                // Recurse until empty
+                self.deleteCollection(ref, batchSize: batchSize, completion: completion)
+            }
+        }
     }
 
     // MARK: - Lists (Friends / Incoming / Sent)

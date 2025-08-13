@@ -1,11 +1,15 @@
-// FindFriendsView.swift
-
 import SwiftUI
+import Foundation
+import FirebaseAuth
+import FirebaseFirestore
+
+
 
 struct FindFriendsView: View {
     @StateObject private var vm = FriendViewModel()
     @State private var showingFilters = false
     @State private var searchText = ""
+    @State private var selectedFriend: Friend?   // ⬅️ NEW
 
     init() {
         let barBG = UIColor(Color(hex: "#2E5930"))
@@ -45,9 +49,7 @@ struct FindFriendsView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Search Header
                 VStack(spacing: 16) {
-                    // Main Search Bar
                     HStack {
                         HStack {
                             Image(systemName: "magnifyingglass")
@@ -192,7 +194,8 @@ struct FindFriendsView: View {
                                         onCancel:  { vm.cancelRequest(with: friend.id) },
                                         onAccept:  { vm.acceptRequest(from: friend.id) },
                                         onDecline: { vm.declineRequest(from: friend.id) },
-                                        onUnfriend:{ vm.unfriend(friend.id) }
+                                        onUnfriend:{ vm.unfriend(friend.id) },
+                                        onSelect:  { selectedFriend = friend }   // ⬅️ NEW
                                     )
                                 }
                             }
@@ -218,7 +221,8 @@ struct FindFriendsView: View {
                                         onCancel:  { vm.cancelRequest(with: friend.id) },
                                         onAccept:  { vm.acceptRequest(from: friend.id) },
                                         onDecline: { vm.declineRequest(from: friend.id) },
-                                        onUnfriend:{ vm.unfriend(friend.id) }
+                                        onUnfriend:{ vm.unfriend(friend.id) },
+                                        onSelect:  { selectedFriend = friend }   // ⬅️ NEW
                                     )
                                 }
                             }
@@ -239,7 +243,6 @@ struct FindFriendsView: View {
             }
         }
         .navigationTitle("Find Friends")
-        
         .navigationBarTitleDisplayMode(.large)
         .toolbarBackground(Color(hex: "#2E5930"), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -249,15 +252,27 @@ struct FindFriendsView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 NavigationLink(destination: FriendsHubView(vm: vm)) {
                     Image(systemName: "person.2.fill")
-     
                 }
             }
         }
         .onAppear { vm.loadData() }
+        .sheet(item: $selectedFriend) { friend in
+            NavigationStack {
+                FriendProfileView(friend: friend, vm: vm)
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .safeAreaInset(edge: .bottom) {
+            BannerAdView(adUnitID: AdConfig.bannerUnitID)
+            .frame(height: 50)
+            .background(Color.white)
+            .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
+        }
     }
 }
 
-// MARK: - Section header
 
 struct SectionHeader: View {
     let title: String
@@ -302,6 +317,7 @@ struct EnhancedFriendRow: View {
     let onAccept: () -> Void
     let onDecline: () -> Void
     let onUnfriend: () -> Void
+    let onSelect: () -> Void     // ⬅️ NEW
 
     @State private var isPressed = false
 
@@ -373,6 +389,8 @@ struct EnhancedFriendRow: View {
                 .fill(Color.white)
                 .shadow(color: Color(hex: "#EFEAD9").opacity(0.06), radius: 4, y: 2)
         )
+        .contentShape(Rectangle())          // ⬅️ make whole row tappable
+        .onTapGesture { onSelect() }        // ⬅️ open profile on card tap (buttons still work)
         .scaleEffect(isPressed ? 0.98 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isPressed)
         .simultaneousGesture(
@@ -380,8 +398,8 @@ struct EnhancedFriendRow: View {
                 .onChanged { _ in isPressed = true }
                 .onEnded { _ in isPressed = false }
         )
+        
     }
-
 
     @ViewBuilder
     private var actionButtons: some View {
@@ -403,7 +421,6 @@ struct EnhancedFriendRow: View {
                 pillOutline(primaryIcon: "person.fill.xmark", title: "Remove", action: onUnfriend)
             }
         }
-
     }
 
     @ViewBuilder
@@ -418,9 +435,7 @@ struct EnhancedFriendRow: View {
                     .minimumScaleFactor(0.9)
                     .allowsTightening(true)
             }
-            // prevent wrapping, even when tight on width
             .fixedSize(horizontal: true, vertical: false)
-            // slightly narrower to fit small screens
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 20).fill(Color(hex: "#004C26")))
@@ -449,9 +464,9 @@ struct EnhancedFriendRow: View {
             .foregroundColor(Color(hex: "#004C26"))
         }
     }
-
-   
 }
+
+// MARK: - Empty State
 
 struct EmptyStateView: View {
     let searchText: String
@@ -481,7 +496,6 @@ struct EmptyStateView: View {
     }
 }
 
-
 private extension View {
     func modernInputStyle() -> some View {
         self
@@ -495,3 +509,211 @@ private extension View {
             )
     }
 }
+
+// MARK: - Friend Profile (Sheet Content)
+
+struct FriendProfileView: View {
+    let friend: Friend
+    @ObservedObject var vm: FriendViewModel
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var status: FriendStatus {
+        vm.statusFor(friend.id)
+    }
+
+    private var gradientColors: [Color] {
+        let baseColors = [
+            [Color(hex: "#004C26"), Color(hex: "#006B35")],
+            [Color(hex: "#D4A574"), Color(hex: "#B8935A")],
+            [Color(hex: "#2E5930"), Color(hex: "#004C26")],
+            [Color(hex: "#C9A961"), Color(hex: "#A8924E")],
+            [Color(hex: "#1B4D20"), Color(hex: "#2E5930")]
+        ]
+        let hash = abs(friend.fullName.hashValue)
+        return baseColors[hash % baseColors.count]
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+
+                // Header
+                VStack(spacing: 12) {
+                    Circle()
+                        .fill(LinearGradient(colors: gradientColors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 96, height: 96)
+                        .overlay(
+                            Text(String(friend.fullName.prefix(1)))
+                                .foregroundColor(Color(hex: "#004C26"))
+                                .font(.system(size: 42, weight: .bold))
+                        )
+                        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+
+                    Text(friend.fullName)
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundColor(Color(hex: "#004C26"))
+
+                    HStack(spacing: 10) {
+                        Label(friend.major, systemImage: "graduationcap.fill")
+                        Label("Class of \(friend.year)", systemImage: "calendar")
+                    }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(Color(hex: "#004C26"))
+                }
+                .padding(.top, 8)
+
+                // Actions
+                VStack(spacing: 12) {
+                    switch status {
+                    case .none:
+                        PrimaryButton(title: "Add Friend", icon: "person.badge.plus") {
+                            vm.sendRequest(to: friend.id)
+                        }
+
+                    case .outgoing:
+                        DisabledButton(title: "Request Sent", icon: "clock")
+                        SecondaryButton(title: "Cancel Request", icon: "xmark") {
+                            vm.cancelRequest(with: friend.id)
+                        }
+
+                    case .incoming:
+                        PrimaryButton(title: "Accept Request", icon: "checkmark") {
+                            vm.acceptRequest(from: friend.id)
+                        }
+                        SecondaryButton(title: "Decline", icon: "xmark") {
+                            vm.declineRequest(from: friend.id)
+                        }
+
+                    case .friends:
+                        PrimaryButton(title: "Message", icon: "message.fill") {
+                            // TODO: Hook up to your chat flow/navigation
+                        }
+                        SecondaryButton(title: "Remove Friend", icon: "person.fill.xmark") {
+                            vm.unfriend(friend.id)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+
+                // Info section
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("About")
+                        .font(.headline)
+                        .foregroundColor(Color(hex: "#004C26"))
+
+                    VStack(spacing: 8) {
+                        InfoRow(icon: "book.closed.fill", label: "Major", value: friend.major)
+                        InfoRow(icon: "calendar", label: "Class Year", value: friend.year)
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white)
+                            .shadow(color: Color(hex: "#EFEAD9").opacity(0.08), radius: 6, y: 3)
+                    )
+                }
+                .padding(.horizontal)
+
+                Spacer(minLength: 20)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 24)
+        }
+        .background(
+            LinearGradient(
+                colors: [Color(hex: "#FFF5E1"), Color(hex: "#F0E6D2")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        )
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") { dismiss() }
+                    .foregroundColor(.white)
+            }
+        }
+        .toolbarBackground(Color(hex: "#2E5930"), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationTitle("Profile")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Profile UI helpers
+
+private struct PrimaryButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                Text(title).fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 24).fill(Color(hex: "#004C26")))
+            .foregroundColor(.white)
+        }
+    }
+}
+
+private struct SecondaryButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                Text(title).fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 24).stroke(Color(hex: "#004C26"), lineWidth: 1))
+            .foregroundColor(Color(hex: "#004C26"))
+        }
+    }
+}
+
+private struct DisabledButton: View {
+    let title: String
+    let icon: String
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+            Text(title).fontWeight(.semibold)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 24).fill(Color(hex: "#004C26").opacity(0.2)))
+        .foregroundColor(Color(hex: "#004C26"))
+    }
+}
+
+private struct InfoRow: View {
+    let icon: String
+    let label: String
+    let value: String
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .frame(width: 22)
+                .foregroundColor(Color(hex: "#004C26"))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#004C26").opacity(0.8))
+                Text(value)
+                    .font(.body)
+                    .foregroundColor(Color(hex: "#004C26"))
+            }
+            Spacer()
+        }
+    }
+}
+

@@ -18,6 +18,7 @@
 		8738AE482E45A6C2008F2947 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = 8738AE472E45A6C2008F2947 /* FirebaseDatabase */; };
 		8738AE4A2E45A6C2008F2947 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 8738AE492E45A6C2008F2947 /* FirebaseFirestore */; };
 		8738AE4C2E45A6C2008F2947 /* FirebaseFirestoreCombine-Community in Frameworks */ = {isa = PBXBuildFile; productRef = 8738AE4B2E45A6C2008F2947 /* FirebaseFirestoreCombine-Community */; };
+		877DCB022E4B9635007156B2 /* GoogleMobileAds in Frameworks */ = {isa = PBXBuildFile; productRef = 877DCB012E4B9635007156B2 /* GoogleMobileAds */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +44,7 @@
 				8738AE1E2E456A5F008F2947 /* FirebaseAnalytics in Frameworks */,
 				8738AE4C2E45A6C2008F2947 /* FirebaseFirestoreCombine-Community in Frameworks */,
 				8738AE202E456A5F008F2947 /* FirebaseAnalyticsCore in Frameworks */,
+				877DCB022E4B9635007156B2 /* GoogleMobileAds in Frameworks */,
 				8738AE2B2E456DC1008F2947 /* FirebaseCore in Frameworks */,
 				8738AE4A2E45A6C2008F2947 /* FirebaseFirestore in Frameworks */,
 				8738AE242E456A5F008F2947 /* FirebaseAppCheck in Frameworks */,
@@ -101,6 +103,7 @@
 				8738AE472E45A6C2008F2947 /* FirebaseDatabase */,
 				8738AE492E45A6C2008F2947 /* FirebaseFirestore */,
 				8738AE4B2E45A6C2008F2947 /* FirebaseFirestoreCombine-Community */,
+				877DCB012E4B9635007156B2 /* GoogleMobileAds */,
 			);
 			productName = "Baylor Review";
 			productReference = 8738ADCE2E445AF1008F2947 /* Baylor Review.app */;
@@ -132,6 +135,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8738AE1A2E456A5F008F2947 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				877DCB002E4B9635007156B2 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8738ADCF2E445AF1008F2947 /* Products */;
@@ -297,6 +301,9 @@
 				DEVELOPMENT_TEAM = 48WJ6R8G2G;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Baylor-Review-Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "This identifier will be used to deliver more relevant ads.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -329,6 +336,9 @@
 				DEVELOPMENT_TEAM = 48WJ6R8G2G;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Baylor-Review-Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "This identifier will be used to deliver more relevant ads.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -380,6 +390,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 12.1.0;
+			};
+		};
+		877DCB002E4B9635007156B2 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/googleads/swift-package-manager-google-mobile-ads";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.9.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -434,6 +452,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 8738AE1A2E456A5F008F2947 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = "FirebaseFirestoreCombine-Community";
+		};
+		877DCB012E4B9635007156B2 /* GoogleMobileAds */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 877DCB002E4B9635007156B2 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */;
+			productName = GoogleMobileAds;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

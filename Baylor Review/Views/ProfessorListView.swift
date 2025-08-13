@@ -105,6 +105,13 @@ struct ProfessorListView: View {
             }
         }
         .onAppear { manager.fetchProfessors() }
+        
+        .safeAreaInset(edge: .bottom) {
+            BannerAdView(adUnitID: AdConfig.bannerUnitID)
+            .frame(height: 50) // adaptive usually ~50–100
+            .background(Color.white)
+            .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
+        }
     }
 }
 
@@ -295,7 +302,10 @@ struct IndividualReviewCard: View {
                 .fill(Color.white)
                 .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
         )
+        
+        
     }
+    
 }
 
 

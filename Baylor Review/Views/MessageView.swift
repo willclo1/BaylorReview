@@ -4,7 +4,9 @@ import FirebaseAuth
 struct MessagesView: View {
     @EnvironmentObject private var auth: AuthViewModel
     @StateObject private var vm = FriendViewModel()
-    @State private var chatService: ChatService? = nil
+
+    @State private var chatService: ChatService?
+    @State private var authHandle: AuthStateDidChangeListenerHandle?
     @State private var showNewChat = false
     @State private var navigateToChatId: String?
 
@@ -13,7 +15,7 @@ struct MessagesView: View {
         Dictionary(uniqueKeysWithValues: vm.allUsers.map { ($0.id, $0.fullName) })
     }
     private func displayName(for uid: String) -> String? {
-        nameIndex[uid] 
+        nameIndex[uid]
     }
 
     var body: some View {
@@ -25,15 +27,12 @@ struct MessagesView: View {
             )
             .ignoresSafeArea()
 
-            // Content
             Group {
                 if let service = chatService, vm.hasLoaded {
                     content(service: service)
                 } else {
-                    // Themed loading (no black flash)
                     VStack(spacing: 12) {
-                        ProgressView()
-                            .progressViewStyle(.circular)
+                        ProgressView().progressViewStyle(.circular)
                         Text("Loading messages…")
                             .font(.callout)
                             .foregroundColor(Color(hex: "#004C26"))
@@ -54,20 +53,42 @@ struct MessagesView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .tint(.white)
+
+        // Lifecycle
         .onAppear {
-            // Kick off profiles first (names)
             if !vm.hasLoaded { vm.loadData() }
 
-            // Prepare service, but DON'T start listening yet
-            if chatService == nil {
-                let uid = Auth.auth().currentUser?.uid ?? ""
-                self.chatService = ChatService(currentUserId: uid)
+            // Build/refresh ChatService ONLY when we have a real UID
+            if authHandle == nil {
+                authHandle = Auth.auth().addStateDidChangeListener { _, user in
+                    let uid = user?.uid ?? ""
+                    if uid.isEmpty {
+                        chatService?.stopListening()
+                        chatService = nil
+                        return
+                    }
+                    if chatService?.currentUid != uid {
+                        chatService?.stopListening()
+                        chatService = ChatService(currentUserId: uid)
+                        if vm.hasLoaded {
+                            chatService?.listenChats()
+                        }
+                    }
+                }
             }
         }
+        .onDisappear {
+            if let h = authHandle {
+                Auth.auth().removeStateDidChangeListener(h)
+                authHandle = nil
+            }
+        }
+        // Start chats listener only after names are ready (prevents UID flicker in rows)
         .onChange(of: vm.hasLoaded) { loaded in
-            // Start chat listener only after names are ready -> no UID flash
             if loaded { chatService?.listenChats() }
         }
+
+        // New chat
         .sheet(isPresented: $showNewChat) {
             NewChatSheet(friends: vm.friendsList) { friend in
                 guard let service = chatService else { return }
@@ -78,14 +99,36 @@ struct MessagesView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-    }
 
+        // === Banner pinned to the bottom of this screen ===
+        .safeAreaInset(edge: .bottom) {
+            BannerAdView(adUnitID: AdConfig.bannerUnitID)
+                .frame(height: 50)
+                .background(Color.white)
+                .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
+        }
+    }
     @ViewBuilder
     private func content(service: ChatService) -> some View {
+        ChatsList(
+            service: service,
+            nameIndex: nameIndex,
+            navigateToChatId: $navigateToChatId
+        )
+    }
+}
+
+
+private struct ChatsList: View {
+    @ObservedObject var service: ChatService
+    let nameIndex: [String: String]
+    @Binding var navigateToChatId: String?
+
+    private func displayName(for uid: String) -> String? { nameIndex[uid] }
+
+    var body: some View {
         List(service.chats) { chat in
             let otherId = chat.participantIds.first { $0 != service.currentUid } ?? ""
-
-            // Look up name; if nil, show skeleton (never UID)
             let name = displayName(for: otherId)
 
             Button { navigateToChatId = chat.id } label: {
@@ -101,7 +144,6 @@ struct MessagesView: View {
     }
 }
 
-// MARK: - Chat Row
 
 private struct ChatRow: View {
     let chat: Chat
@@ -136,16 +178,15 @@ private struct ChatRow: View {
                         .foregroundColor(Color(hex: "#004C26"))
                         .lineLimit(1)
                 } else {
-                    // Name skeleton — avoids showing UID
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(hex: "#F5B800"))
+                        .fill(Color(hex: "#E8DCC6"))
                         .frame(width: 120, height: 12)
                         .redacted(reason: .placeholder)
                 }
 
-                Text(chat.lastMessageText ?? "New chat")
+                Text(chat.lastMessageText?.isEmpty == false ? chat.lastMessageText! : "New chat")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(Color(hex: "#F5B800"))
                     .lineLimit(1)
             }
 
@@ -161,7 +202,7 @@ private struct ChatRow: View {
     }
 }
 
-// MARK: - New Chat Sheet
+// MARK: - New Chat Sheet (unchanged except style)
 
 private struct NewChatSheet: View {
     let friends: [Friend]
@@ -204,7 +245,7 @@ private struct NewChatSheet: View {
                     .padding(.vertical, 10)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(hex: "#E8DCC6")) // <- fixed typo here (removed stray "/")
+                            .fill(Color(hex: "#E8DCC6"))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
@@ -217,8 +258,7 @@ private struct NewChatSheet: View {
                     List {
                         ForEach(filtered) { f in
                             Button {
-                                onPick(f)
-                                dismiss()
+                                onPick(f); dismiss()
                             } label: {
                                 FriendPickRow(friend: f)
                             }
@@ -304,7 +344,7 @@ private struct FriendPickRow: View {
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.white)
-                .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
+                .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
         )
         .contentShape(RoundedRectangle(cornerRadius: 14))
     }

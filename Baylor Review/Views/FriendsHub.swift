@@ -64,6 +64,13 @@ struct FriendsHubView: View {
         .tint(.white)
         .onAppear { if !vm.hasLoaded { vm.loadData() } }
         .animation(.easeOut(duration: 0.2), value: tab)
+        
+        .safeAreaInset(edge: .bottom) {
+            BannerAdView(adUnitID: AdConfig.bannerUnitID)
+            .frame(height: 50)
+            .background(Color.white)
+            .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
+        }
     }
 
     // MARK: - Computed
@@ -92,6 +99,8 @@ struct FriendsHubView: View {
         let idx = abs(name.hashValue) % palettes.count
         return palettes[idx]
     }
+    
+    
 }
 
 // MARK: - Row Subview (keeps type-checking fast)
