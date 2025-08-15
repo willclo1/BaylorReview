@@ -14,13 +14,10 @@ struct MessagesView: View {
     private var nameIndex: [String: String] {
         Dictionary(uniqueKeysWithValues: vm.allUsers.map { ($0.id, $0.fullName) })
     }
-    private func displayName(for uid: String) -> String? {
-        nameIndex[uid]
-    }
+    private func displayName(for uid: String) -> String? { nameIndex[uid] }
 
     var body: some View {
         ZStack {
-            // App background
             LinearGradient(
                 colors: [Color(hex: "#FFF5E1"), Color(hex: "#F0E6D2")],
                 startPoint: .top, endPoint: .bottom
@@ -29,7 +26,11 @@ struct MessagesView: View {
 
             Group {
                 if let service = chatService, vm.hasLoaded {
-                    content(service: service)
+                    ChatsList(
+                        service: service,
+                        nameIndex: nameIndex,
+                        navigateToChatId: $navigateToChatId
+                    )
                 } else {
                     VStack(spacing: 12) {
                         ProgressView().progressViewStyle(.circular)
@@ -43,6 +44,13 @@ struct MessagesView: View {
         .navigationTitle("Messages")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                if let s = chatService {
+                    NavigationLink {
+                        SafetyCenterView(service: s)
+                    } label: { Image(systemName: "hand.raised") }
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showNewChat = true } label: {
                     Image(systemName: "square.and.pencil").font(.title3)
@@ -58,21 +66,22 @@ struct MessagesView: View {
         .onAppear {
             if !vm.hasLoaded { vm.loadData() }
 
-            // Build/refresh ChatService ONLY when we have a real UID
             if authHandle == nil {
                 authHandle = Auth.auth().addStateDidChangeListener { _, user in
                     let uid = user?.uid ?? ""
                     if uid.isEmpty {
                         chatService?.stopListening()
+                        chatService?.stopSafetyListeners()
                         chatService = nil
                         return
                     }
                     if chatService?.currentUid != uid {
                         chatService?.stopListening()
-                        chatService = ChatService(currentUserId: uid)
-                        if vm.hasLoaded {
-                            chatService?.listenChats()
-                        }
+                        chatService?.stopSafetyListeners()
+                        let svc = ChatService(currentUserId: uid)
+                        svc.startSafetyListeners()
+                        chatService = svc
+                        if vm.hasLoaded { chatService?.listenChats() }
                     }
                 }
             }
@@ -83,24 +92,24 @@ struct MessagesView: View {
                 authHandle = nil
             }
         }
-        // Start chats listener only after names are ready (prevents UID flicker in rows)
         .onChange(of: vm.hasLoaded) { loaded in
             if loaded { chatService?.listenChats() }
         }
 
         // New chat
         .sheet(isPresented: $showNewChat) {
-            NewChatSheet(friends: vm.friendsList) { friend in
-                guard let service = chatService else { return }
-                service.getOrCreateChat(with: friend.id) { cid in
-                    navigateToChatId = cid
+            if let s = chatService {
+                NewChatSheet(friends: vm.friendsList) { friend in
+                    s.getOrCreateChat(with: friend.id) { cid in
+                        navigateToChatId = cid
+                    }
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
         }
 
-        // === Banner pinned to the bottom of this screen ===
+        // === Banner pinned to bottom (remove if you don't use ads) ===
         .safeAreaInset(edge: .bottom) {
             BannerAdView(adUnitID: AdConfig.bannerUnitID)
                 .frame(height: 50)
@@ -108,16 +117,9 @@ struct MessagesView: View {
                 .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
         }
     }
-    @ViewBuilder
-    private func content(service: ChatService) -> some View {
-        ChatsList(
-            service: service,
-            nameIndex: nameIndex,
-            navigateToChatId: $navigateToChatId
-        )
-    }
 }
 
+// MARK: - Chats List
 
 private struct ChatsList: View {
     @ObservedObject var service: ChatService
@@ -130,9 +132,17 @@ private struct ChatsList: View {
         List(service.chats) { chat in
             let otherId = chat.participantIds.first { $0 != service.currentUid } ?? ""
             let name = displayName(for: otherId)
+            let isBlocked = service.blockedIds.contains(otherId)
 
             Button { navigateToChatId = chat.id } label: {
                 ChatRow(chat: chat, displayName: name)
+                    .overlay(alignment: .trailing) {
+                        if isBlocked {
+                            Image(systemName: "hand.raised.fill")
+                                .foregroundColor(.red)
+                                .padding(.trailing, 6)
+                        }
+                    }
             }
             .listRowBackground(Color.white)
         }
@@ -144,14 +154,12 @@ private struct ChatsList: View {
     }
 }
 
-
 private struct ChatRow: View {
     let chat: Chat
     let displayName: String?
 
     var body: some View {
         HStack(spacing: 12) {
-            // Avatar
             ZStack {
                 Circle()
                     .fill(LinearGradient(
@@ -170,7 +178,6 @@ private struct ChatRow: View {
                 }
             }
 
-            // Meta
             VStack(alignment: .leading, spacing: 4) {
                 if let name = displayName {
                     Text(name)
@@ -202,7 +209,7 @@ private struct ChatRow: View {
     }
 }
 
-
+// MARK: - New Chat Sheet
 
 private struct NewChatSheet: View {
     let friends: [Friend]
@@ -231,7 +238,6 @@ private struct NewChatSheet: View {
                 .ignoresSafeArea()
 
                 VStack(spacing: 12) {
-                    // Search
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 16, weight: .semibold))
@@ -254,12 +260,9 @@ private struct NewChatSheet: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
 
-                    // Friend list
                     List {
                         ForEach(filtered) { f in
-                            Button {
-                                onPick(f); dismiss()
-                            } label: {
+                            Button { onPick(f); dismiss() } label: {
                                 FriendPickRow(friend: f)
                             }
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
@@ -272,9 +275,7 @@ private struct NewChatSheet: View {
                                 Image(systemName: "person.crop.circle.badge.exclamationmark")
                                     .font(.system(size: 28, weight: .medium))
                                     .foregroundColor(Color(hex: "#2E5930").opacity(0.8))
-                                Text("No matches")
-                                    .font(.headline)
-                                    .foregroundColor(Color(hex: "#004C26"))
+                                Text("No matches").font(.headline).foregroundColor(Color(hex: "#004C26"))
                                 Text("Try a different name, major, or year.")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
@@ -291,8 +292,7 @@ private struct NewChatSheet: View {
             .navigationTitle("New Message")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundColor(.white)
+                    Button("Cancel") { dismiss() }.foregroundColor(.white)
                 }
             }
             .toolbarBackground(Color(hex: "#2E5930"), for: .navigationBar)
@@ -309,12 +309,10 @@ private struct FriendPickRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [Color(hex: "#2E5930"), Color(hex: "#1B4D20")],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    )
-                )
+                .fill(LinearGradient(
+                    colors: [Color(hex: "#2E5930"), Color(hex: "#1B4D20")],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
                 .frame(width: 44, height: 44)
                 .overlay(
                     Text(String(friend.fullName.prefix(1)).uppercased())
@@ -350,8 +348,6 @@ private struct FriendPickRow: View {
     }
 }
 
-private extension Optional where Wrapped == String {
-    var item: String? { self }
-}
-
+// If you already have this extension elsewhere, delete this duplicate.
+private extension Optional where Wrapped == String { var item: String? { self } }
 extension String: Identifiable { public var id: String { self } }

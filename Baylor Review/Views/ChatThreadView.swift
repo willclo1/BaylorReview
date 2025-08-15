@@ -2,11 +2,11 @@ import SwiftUI
 import FirebaseFirestore
 import FirebaseAuth
 
-private struct UserLite: Identifiable, Equatable {
+// Lightweight user for pickers/sheets
+struct UserLite: Identifiable, Equatable {
     let id: String
     let displayName: String
 }
-
 
 
 public struct ChatThreadView: View {
@@ -18,12 +18,19 @@ public struct ChatThreadView: View {
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
 
-    // Reporting UI state (NEW)
-    @State private var participants: [UserLite] = []   // other users in this chat
+    // Participants / reporting
+    @State private var participants: [UserLite] = []
     @State private var selectedUserIndex: Int = 0
     @State private var showReportSheet = false
     @State private var reportThanks = false
     @State private var reportError: String?
+
+    // Block/Mute state
+    @State private var iBlockedThem = false
+    @State private var theyBlockedMe = false
+    @State private var iMutedThem = false
+    @State private var showBlockConfirm = false
+    @State private var showUnblockConfirm = false
 
     private var selectedUser: UserLite? {
         guard !participants.isEmpty, selectedUserIndex < participants.count else { return nil }
@@ -37,6 +44,25 @@ public struct ChatThreadView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+
+            // Block banner
+            if let victim = selectedUser, (iBlockedThem || theyBlockedMe) {
+                HStack(spacing: 8) {
+                    Image(systemName: "hand.raised.fill")
+                    Text(
+                        theyBlockedMe
+                        ? "\(victim.displayName) has blocked you. You can’t send messages."
+                        : "You blocked \(victim.displayName). Unblock to continue messaging."
+                    )
+                    .font(.footnote.bold())
+                }
+                .foregroundColor(.white)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(Color.red.opacity(0.85))
+            }
+
+            // Thread
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -58,23 +84,20 @@ public struct ChatThreadView: View {
                 }
                 .onChange(of: messages.count) { _ in
                     if let last = messages.last?.id {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(last, anchor: .bottom)
-                        }
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
                     }
                 }
                 .onChange(of: inputFocused) { focused in
                     if focused, let last = messages.last?.id {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo(last, anchor: .bottom)
-                            }
+                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
                         }
                     }
                 }
             }
 
             // Composer
+            let cannotSend = iBlockedThem || theyBlockedMe
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message…", text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -84,14 +107,9 @@ public struct ChatThreadView: View {
                     .onSubmit(send)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color(hex: "#E8DCC6"))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color(hex: "#2E5930").opacity(0.25), lineWidth: 1)
-                    )
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Color(hex: "#E8DCC6")))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(hex: "#2E5930").opacity(0.25), lineWidth: 1))
+                    .disabled(cannotSend)
 
                 Button(action: send) {
                     Image(systemName: "paperplane.fill")
@@ -101,15 +119,14 @@ public struct ChatThreadView: View {
                         .foregroundColor(.white)
                         .shadow(color: Color(hex: "#2E5930").opacity(0.3), radius: 4, y: 2)
                 }
-                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.6 : 1)
+                .disabled(cannotSend || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .opacity(cannotSend ? 0.4 : 1)
             }
             .padding(.all, 10)
             .background(
                 ZStack {
                     Color(hex: "#EFEAD9").opacity(0.7)
-                    Rectangle()
-                        .fill(Color.black.opacity(0.06))
+                    Rectangle().fill(Color.black.opacity(0.06))
                         .frame(height: 0.5)
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
@@ -121,14 +138,13 @@ public struct ChatThreadView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .tint(.white)
         .toolbar {
-            // Center title: username picker (NEW)
+            // Center title: participant picker
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 8) {
                     Image(systemName: "person.crop.circle")
                         .font(.system(size: 16, weight: .semibold))
                     if participants.isEmpty {
-                        Text("Chat")
-                            .font(.headline)
+                        Text("Chat").font(.headline)
                     } else {
                         Picker("", selection: $selectedUserIndex) {
                             ForEach(participants.indices, id: \.self) { idx in
@@ -143,15 +159,36 @@ public struct ChatThreadView: View {
                 }
             }
 
-            // Trailing: report button (NEW)
+            // Trailing: ellipsis menu
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showReportSheet = true
+                Menu {
+                    if let victim = selectedUser {
+                        // Mute / Unmute
+                        Button(iMutedThem ? "Unmute \(victim.displayName)" : "Mute \(victim.displayName)") {
+                            if iMutedThem {
+                                service.unmute(userId: victim.id) { _ in iMutedThem = false }
+                            } else {
+                                service.mute(userId: victim.id, displayName: victim.displayName) { _ in iMutedThem = true }
+                            }
+                        }
+
+                        // Block / Unblock
+                        Button(role: iBlockedThem ? .none : .destructive) {
+                            iBlockedThem ? (showUnblockConfirm = true) : (showBlockConfirm = true)
+                        } label: {
+                            Text(iBlockedThem ? "Unblock \(victim.displayName)" : "Block \(victim.displayName)")
+                        }
+
+                        // Report
+                        Button {
+                            showReportSheet = true
+                        } label: {
+                            Label("Report \(victim.displayName)", systemImage: "flag.fill")
+                        }
+                    }
                 } label: {
-                    Image(systemName: "flag.fill")
+                    Image(systemName: "ellipsis.circle")
                 }
-                .disabled(selectedUser == nil)
-                .accessibilityLabel("Report selected user")
             }
         }
         .background(
@@ -166,22 +203,20 @@ public struct ChatThreadView: View {
                 self.messages = msgs
                 service.markRead(chatId: chatId)
             }
-            loadParticipants() // NEW
+            loadParticipants()
         }
         .onDisappear {
             listener?.remove()
             listener = nil
         }
-        // Report sheet + alerts (NEW)
+        .onChange(of: selectedUserIndex) { _ in
+            if let other = selectedUser { refreshSafety(with: other.id) }
+        }
+        // Report sheet + alerts
         .sheet(isPresented: $showReportSheet) {
             if let victim = selectedUser {
                 ReportUserSheet(username: victim.displayName) { reason, details in
-                    service.reportUser(
-                        reportedUid: victim.id,
-                        in: chatId,
-                        reason: reason,
-                        details: details
-                    ) { result in
+                    service.reportUser(reportedUid: victim.id, in: chatId, reason: reason, details: details) { result in
                         switch result {
                         case .success: reportThanks = true
                         case .failure(let err): reportError = err.localizedDescription
@@ -192,17 +227,33 @@ public struct ChatThreadView: View {
         }
         .alert("Thanks for the report", isPresented: $reportThanks) {
             Button("OK", role: .cancel) {}
-        } message: {
-            Text("Our team will review it shortly.")
-        }
+        } message: { Text("Our team will review it shortly.") }
         .alert("Couldn't send report", isPresented: Binding(
             get: { reportError != nil },
             set: { if !$0 { reportError = nil } }
         )) {
             Button("OK", role: .cancel) {}
-        } message: {
-            Text(reportError ?? "Unknown error.")
-        }
+        } message: { Text(reportError ?? "Unknown error.") }
+        .alert("Block this user?", isPresented: $showBlockConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Block", role: .destructive) {
+                if let v = selectedUser {
+                    service.block(userId: v.id, displayName: v.displayName) { _ in
+                        iBlockedThem = true
+                    }
+                }
+            }
+        } message: { Text("They won’t be able to message you and you won’t see their chats.") }
+        .alert("Unblock this user?", isPresented: $showUnblockConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Unblock") {
+                if let v = selectedUser {
+                    service.unblock(userId: v.id) { _ in
+                        iBlockedThem = false
+                    }
+                }
+            }
+        } message: { Text("You can exchange messages again.") }
     }
 
     private func send() {
@@ -212,14 +263,13 @@ public struct ChatThreadView: View {
         inputText = ""
     }
 
-    // Resolve other participants' names for the picker (NEW)
+    // Resolve other participants
     private func loadParticipants() {
         let db = Firestore.firestore()
         db.collection("chats").document(chatId).getDocument { snap, err in
             if let err = err { print("participants error:", err); return }
             let ids = (snap?.data()?["participantIds"] as? [String] ?? [])
                 .filter { $0 != service.currentUid }
-
             if ids.isEmpty { return }
 
             let group = DispatchGroup()
@@ -228,19 +278,27 @@ public struct ChatThreadView: View {
                 group.enter()
                 db.collection("users").document(id).getDocument { dsnap, _ in
                     let name = dsnap?.data()?["fullName"] as? String
-                    let lite = UserLite(id: id, displayName: (name?.isEmpty == false ? name! : id))
-                    results.append(lite)
+                    results.append(UserLite(id: id, displayName: (name?.isEmpty == false ? name! : id)))
                     group.leave()
                 }
             }
             group.notify(queue: .main) {
                 self.participants = results.sorted { $0.displayName < $1.displayName }
                 self.selectedUserIndex = 0
+                if let first = self.participants.first { self.refreshSafety(with: first.id) }
             }
         }
     }
 
-    // MARK: - Day divider logic
+    private func refreshSafety(with otherUid: String) {
+        service.blockedEitherWay(with: otherUid) { iBlocked, theyBlocked in
+            self.iBlockedThem = iBlocked
+            self.theyBlockedMe = theyBlocked
+        }
+        self.iMutedThem = service.mutedIds.contains(otherUid)
+    }
+
+    // Day divider logic
     private func shouldShowDayDivider(at index: Int) -> Bool {
         guard index < messages.count else { return false }
         guard let curr = messages[index].createdAt?.dateValue() else { return false }
@@ -381,17 +439,11 @@ private struct ReportUserSheet: View {
                         .foregroundColor(Color(hex: "#004C26"))
                     TextEditor(text: $details)
                         .frame(minHeight: 120)
-                        .scrollContentBackground(.hidden)  
+                        .scrollContentBackground(.hidden)
                         .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.white)
-                                .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color(hex: "#F5B800").opacity(0.4), lineWidth: 1)
-                        )
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white)
+                            .shadow(color: .black.opacity(0.05), radius: 1, y: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#F5B800").opacity(0.4), lineWidth: 1))
                 }
 
                 Spacer()
@@ -414,9 +466,7 @@ private struct ReportUserSheet: View {
                         let trimmed = details.trimmingCharacters(in: .whitespacesAndNewlines)
                         onSubmit(reason, trimmed.isEmpty ? nil : trimmed)
                         dismiss()
-                    } label: {
-                        Text("Report").bold()
-                    }
+                    } label: { Text("Report").bold() }
                 }
             }
         }
