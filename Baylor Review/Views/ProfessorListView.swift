@@ -1,5 +1,6 @@
 import SwiftUI
 
+
 struct ProfessorListView: View {
     @StateObject private var manager = ProfessorViewModel()
     @State private var searchText = ""
@@ -181,10 +182,7 @@ struct ProfessorDetailView: View {
                             .font(.system(size: 28, weight: .bold))
                             .foregroundColor(Color(hex: "#004C26"))
 
-                        Text("Courses: \(professorSummary.courses.joined(separator: ", "))")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(Color(hex: "#F5B800"))
-                            .multilineTextAlignment(.center)
+
 
                         HStack(spacing: 16) {
                             VStack {
@@ -260,10 +258,6 @@ struct ProfessorSummaryCard: View {
                     Text(summary.name)
                         .font(.system(size: 20, weight: .bold))
                         .foregroundColor(Color(hex: "#004C26"))
-                    Text(summary.courses.joined(separator: ", "))
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Color(hex: "#F5B800"))
-                        .lineLimit(2)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {

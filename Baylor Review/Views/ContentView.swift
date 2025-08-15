@@ -31,7 +31,7 @@ struct ContentView: View {
                                     .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
 
                                 VStack(spacing: 8) {
-                                    Text("The Baylor Review")
+                                    Text("BU Review")
                                         .font(.system(size: 30, weight: .bold, design: .rounded))
                                         .foregroundColor(Color(hex: "#004C26"))
 
